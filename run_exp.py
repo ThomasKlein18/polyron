@@ -9,31 +9,50 @@ flags.DEFINE_string("save_path", None,
     "The path where we'll store checkpoints and summaries.")
 flags.DEFINE_string("data_path", "/Users/thomasklein/Projects/Polyron/polyron/mnist/",
     "The path from where to grab training data.")
-flags.DEFINE_integer("epochs", 100,
+flags.DEFINE_integer("epochs", 20,
     "The number of epochs for which to train the model.")
 flags.DEFINE_integer("batchsize", 128,
     "The batchsize, what did you think this would be?")
+flags.DEFINE_string("mode", "relu",
+    "The activation function  mode. Choose from: relu, tanh, all, single.")
     
 FLAGS = flags.FLAGS
 
+def all_act(x):
+    with tf.variable_scope("scope"):
+        res = tf.constant(0, dtype=tf.float32)
+        for j in range(5):
+            var = tf.get_variable(name="scope"+str(j), shape=[1], initializer=tf.constant_initializer(0.00001))
+            res += var * tf.math.pow(x, tf.constant(j, dtype=tf.float32))
+        return res
+
+def get_activation_function(a):
+    if a == "relu":
+        return tf.nn.relu 
+    elif a == "tanh":
+        return tf.nn.tanh 
+    elif a == "all":
+        return all_act 
+    elif a == "single":
+        print("you wish")
+        raise NotImplementedError("not implemented")
 
 def model_fn(features, labels, mode, params):
 
-    print("features:", features) # should be shape batchsize x 28 x 28
-    features = tf.reshape(features, [-1, 28*28]) # should create shape batchsize x 784
-    print("features: ", features)
+    features = tf.reshape(features, [-1, 28*28]) # should create shape batchsize x 784, in case images were supplied differently
+    features = features / 255 - 0.5
 
     layer = features
+    import sys
+    #layer = tf.Print(layer, [layer], summarize=-1)
 
     for layer_dim in params['layers']:
-        layer = tf.layers.dense(layer, layer_dim, activation=tf.nn.tanh)
+        layer = tf.layers.dense(layer, layer_dim, activation=get_activation_function(FLAGS.mode))
 
     logits = tf.layers.dense(layer, params['classes'], activation=None)
-    print("logits:", logits) # should have shape batchsize x 10
 
     # Compute predictions
     predicted_classes = tf.argmax(logits, 1)
-    print("predicted_classes:", predicted_classes) # should have shape batchsize x 1
 
     if mode == tf.estimator.ModeKeys.PREDICT:
         predictions = {
@@ -52,7 +71,6 @@ def model_fn(features, labels, mode, params):
                                    name='acc_op')
     metrics = {'accuracy': accuracy}
     tf.summary.scalar('accuracy', accuracy[1])
-    summary_op = tf.summary.merge_all() 
 
     if mode == tf.estimator.ModeKeys.EVAL:
         return tf.estimator.EstimatorSpec(mode, loss=loss, eval_metric_ops=metrics)
