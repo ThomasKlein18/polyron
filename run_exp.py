@@ -13,18 +13,12 @@ flags.DEFINE_integer("epochs", 20,
     "The number of epochs for which to train the model.")
 flags.DEFINE_integer("batchsize", 128,
     "The batchsize, what did you think this would be?")
-flags.DEFINE_string("mode", "relu",
-    "The activation function  mode. Choose from: relu, tanh, all, single.")
+flags.DEFINE_integer("degree", 5,
+    "The degree of the polynomials.")
+flags.DEFINE_string("mode", "poly",
+    "The activation function  mode. Choose from: relu, tanh, poly.")
     
 FLAGS = flags.FLAGS
-
-def all_act(x):
-    with tf.variable_scope("scope"):
-        res = tf.constant(0, dtype=tf.float32)
-        for j in range(5):
-            var = tf.get_variable(name="scope"+str(j), shape=[1], initializer=tf.constant_initializer(0.00001))
-            res += var * tf.math.pow(x, tf.constant(j, dtype=tf.float32))
-        return res
 
 def get_activation_function(a):
     if a == "relu":
@@ -37,17 +31,71 @@ def get_activation_function(a):
         print("you wish")
         raise NotImplementedError("not implemented")
 
+
+def all_act(x):
+    with tf.variable_scope("scope"):
+        res = tf.constant(0, dtype=tf.float32)
+        for j in range(5):
+            var = tf.get_variable(name="scope"+str(j), shape=[1], initializer=tf.constant_initializer(0.00001))
+            res += var * tf.math.pow(x, tf.constant(j, dtype=tf.float32))
+        return res
+
+
+
+def mlp_layer(x, neurons_out, degree, varscope, mode):
+    """
+    Creates a vanilla feed-forward layer that takes intake as an input and has neurons_out output neurons.
+    
+    intake      = the input tensor, e.g. [batchsize, 512]
+    neurons_out = the number of output neurons. If this is the last layer, the number of classes.
+    degree      = the degree of the polynomial to be used as activation function
+    varscope    = the variable scope to be used (just some unique string)
+    mode        = which activation mode to use. relu and tanh are simply applied, poly requires extra variables
+    """
+    print("x in mlp: ",x)
+    shapes = x.get_shape().as_list()
+    #batchsize = shapes[0]
+    neurons_in = shapes[1]
+
+    with tf.variable_scope(varscope):
+    
+        initializer = tf.random_normal_initializer(stddev = neurons_in**(-1/2))
+        
+        weights = tf.get_variable("weights", initializer([neurons_in, neurons_out]))
+        # bias might not be necessary since the polynomial has a y-axis-intercept
+        bias = tf.get_variable("bias", tf.constant(0.0, shape = [neurons_out]))
+        
+        logit = tf.matmul(x, weights)+bias
+
+        if mode == 'poly':
+
+            coefficients = tf.get_variable("coefficients",initializer([neurons_out,degree]), dtype=tf.float32)
+
+            summe = tf.constant(np.zeros((neurons_out,1)), dtype=tf.float32)
+            for i in range(degree):
+                summe += tf.multiply(tf.math.pow(logit,tf.constant(i, dtype=tf.float32)), tf.reshape(coefficients[:,i], [neurons_out,1]))
+
+            return summe
+        
+        elif mode == 'relu':
+            return tf.nn.relu(logits)
+        elif mode == 'tanh':
+            return tf.nn.tanh(logits)
+        else:
+            raise NotImplementedError("Mode not recognized, use 'poly', 'relu' or 'tanh'.")
+
 def model_fn(features, labels, mode, params):
 
     features = tf.reshape(features, [-1, 28*28]) # should create shape batchsize x 784, in case images were supplied differently
     features = features / 255 - 0.5
 
     layer = features
-    import sys
+    #import sys
     #layer = tf.Print(layer, [layer], summarize=-1)
 
-    for layer_dim in params['layers']:
-        layer = tf.layers.dense(layer, layer_dim, activation=get_activation_function(FLAGS.mode))
+    for idx, layer_dim in enumerate(params['layers']):
+        #layer = tf.layers.dense(layer, layer_dim, activation=get_activation_function(FLAGS.mode))
+        layer = mlp_layer(layer, layer_dim, degree, "layer"+str(idx), params['mode']):
 
     logits = tf.layers.dense(layer, params['classes'], activation=None)
 
@@ -90,7 +138,9 @@ def main(_):
         model_dir=FLAGS.save_path,
         params={
             'layers': [64, 32],
-            'classes': 10
+            'classes': 10,
+            'degree': FLAGS.degree
+            'mode': FLAGS.mode
         })
 
     class Config:
