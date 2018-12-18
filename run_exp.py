@@ -11,7 +11,7 @@ flags.DEFINE_string("data_path", "/Users/thomasklein/Projects/Polyron/polyron/mn
     "The path from where to grab training data.")
 flags.DEFINE_integer("epochs", 20,
     "The number of epochs for which to train the model.")
-flags.DEFINE_integer("batchsize", 128,
+flags.DEFINE_integer("batchsize", 32,
     "The batchsize, what did you think this would be?")
 flags.DEFINE_integer("degree", 5,
     "The degree of the polynomials.")
@@ -19,27 +19,6 @@ flags.DEFINE_string("mode", "poly",
     "The activation function  mode. Choose from: relu, tanh, poly.")
     
 FLAGS = flags.FLAGS
-
-def get_activation_function(a):
-    if a == "relu":
-        return tf.nn.relu 
-    elif a == "tanh":
-        return tf.nn.tanh 
-    elif a == "all":
-        return all_act 
-    elif a == "single":
-        print("you wish")
-        raise NotImplementedError("not implemented")
-
-
-def all_act(x):
-    with tf.variable_scope("scope"):
-        res = tf.constant(0, dtype=tf.float32)
-        for j in range(5):
-            var = tf.get_variable(name="scope"+str(j), shape=[1], initializer=tf.constant_initializer(0.00001))
-            res += var * tf.math.pow(x, tf.constant(j, dtype=tf.float32))
-        return res
-
 
 
 def mlp_layer(x, neurons_out, degree, varscope, mode):
@@ -52,30 +31,32 @@ def mlp_layer(x, neurons_out, degree, varscope, mode):
     varscope    = the variable scope to be used (just some unique string)
     mode        = which activation mode to use. relu and tanh are simply applied, poly requires extra variables
     """
-    print("x in mlp: ",x)
     shapes = x.get_shape().as_list()
-    #batchsize = shapes[0]
+    batchsize = shapes[0]
     neurons_in = shapes[1]
 
     with tf.variable_scope(varscope):
     
         initializer = tf.random_normal_initializer(stddev = neurons_in**(-1/2))
-        
-        weights = tf.get_variable("weights", initializer([neurons_in, neurons_out]))
+        weights = tf.get_variable(name="weights", initializer=initializer([neurons_in, neurons_out]), dtype=tf.float32)
         # bias might not be necessary since the polynomial has a y-axis-intercept
-        bias = tf.get_variable("bias", tf.constant(0.0, shape = [neurons_out]))
+        bias = tf.get_variable("bias", initializer=tf.constant(0.0, shape = [neurons_out]))
         
-        logit = tf.matmul(x, weights)+bias
+        logits = tf.matmul(x, weights)+bias
 
         if mode == 'poly':
 
-            coefficients = tf.get_variable("coefficients",initializer([neurons_out,degree]), dtype=tf.float32)
+            coefficients = tf.get_variable("coefficients",initializer=initializer([neurons_out,degree]), dtype=tf.float32)
 
-            summe = tf.constant(np.zeros((neurons_out,1)), dtype=tf.float32)
-            for i in range(degree):
-                summe += tf.multiply(tf.math.pow(logit,tf.constant(i, dtype=tf.float32)), tf.reshape(coefficients[:,i], [neurons_out,1]))
-
-            return summe
+            sum_list = []
+            for b in range(batchsize):
+                inner_sum = tf.constant(np.zeros((neurons_out)), dtype=tf.float32)
+                for i in range(degree):
+                    inner_sum += tf.multiply(tf.reshape(tf.math.pow(logits[b,:],tf.constant(i, dtype=tf.float32)), [neurons_out]), tf.reshape(coefficients[:,i], [neurons_out]))
+                sum_list.append(inner_sum)
+            res = tf.stack(sum_list)
+            print("resulting shape: ",res)
+            return res # summe
         
         elif mode == 'relu':
             return tf.nn.relu(logits)
@@ -83,6 +64,7 @@ def mlp_layer(x, neurons_out, degree, varscope, mode):
             return tf.nn.tanh(logits)
         else:
             raise NotImplementedError("Mode not recognized, use 'poly', 'relu' or 'tanh'.")
+
 
 def model_fn(features, labels, mode, params):
 
@@ -95,7 +77,7 @@ def model_fn(features, labels, mode, params):
 
     for idx, layer_dim in enumerate(params['layers']):
         #layer = tf.layers.dense(layer, layer_dim, activation=get_activation_function(FLAGS.mode))
-        layer = mlp_layer(layer, layer_dim, degree, "layer"+str(idx), params['mode']):
+        layer = mlp_layer(layer, layer_dim, params['degree'], "layer"+str(idx), params['mode'])
 
     logits = tf.layers.dense(layer, params['classes'], activation=None)
 
@@ -137,9 +119,9 @@ def main(_):
         model_fn=model_fn,
         model_dir=FLAGS.save_path,
         params={
-            'layers': [64, 32],
+            'layers': [32, 16],
             'classes': 10,
-            'degree': FLAGS.degree
+            'degree': FLAGS.degree,
             'mode': FLAGS.mode
         })
 
@@ -174,6 +156,11 @@ def main(_):
     )
     
     print('\nTest set accuracy: {accuracy:0.3f}\n'.format(**eval_result))
+
+    # ---------- printing variables ------------ #
+
+    #vars = tf.trainable_variables()
+    #print(vars)
 
 if __name__ == '__main__':
     tf.logging.set_verbosity(tf.logging.INFO)
